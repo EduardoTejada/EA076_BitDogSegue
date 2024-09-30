@@ -79,10 +79,6 @@ Kp = 1.0
 Ki = 0.0
 Kd = 0.0
 
-# Variáveis globais dos sensores
-sensor0 = 0
-sensor1 = 0
-
 # Variáveis do PID
 integral = 0
 last_error = 0
