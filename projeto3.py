@@ -5,37 +5,67 @@ from ads1x15 import ADS1115
 import neopixel
 
 linha = 0 # define a cor da linha da linha a ser seguida: 0 pra branco, 1 pra preto
-limiar = 0.7
+limiar = 0.7 # limiar para diferenciar branco e preto na leitura digital
 
 # Velocidade base inicial
-base_speed = 60
+base_speed = 50
 
 # Definição das constantes PID
 Kp = 10.0  # Constante proporcional 10
 Ki = 0.5  # Constante integral
 Kd = 1.5  # Constante derivativa
 
-# Variáveis globais para o controle PID
+# Variáveis para o controle PID
 integral = 0.0
 last_error = 0.0
 
 modo_de_operacao = 0
-
-#0: controle por celular
-#1: controle por bangbang
-#2: controle por PID
+# 0: controle por celular
+# 1: controle por bangbang
+# 2: controle por PID
 
 # Configuração I2C do ADS1115
 i2c1_sda = Pin(2)  # GPIO2 como SDA
 i2c1_scl = Pin(3)  # GPIO3 como SCL
 i2c = I2C(1, scl=i2c1_scl, sda=i2c1_sda, freq=400000)
 adc = ADS1115(i2c, address=0x48, gain=1)
-
 rate = 4
 
-sensores = [0, 0, 0, 0]
-#sensor_esq = Pin(2, Pin.IN)
-#sensor_dir = Pin(3, Pin.IN)
+# Configuração OLED
+i2c = SoftI2C(scl=Pin(15), sda=Pin(14))
+oled = SSD1306_I2C(128, 64, i2c)
+
+# Configuração dos botões
+button_a = Pin(5, Pin.IN, Pin.PULL_UP)
+button_b = Pin(6, Pin.IN, Pin.PULL_UP)
+estado_botao_a = 0
+estado_botao_b = 0
+
+# Configuração dos motores (TB6612FNG)
+motor_in1_a = Pin(4, Pin.OUT)
+motor_in2_a = Pin(9, Pin.OUT)
+motor_pwm_a = PWM(Pin(8))
+motor_pwm_a.freq(1000)
+motor_pwm_a.duty_u16(0)  # Inicialmente desligado
+
+motor_in1_b = Pin(18, Pin.OUT)
+motor_in2_b = Pin(19, Pin.OUT)
+motor_pwm_b = PWM(Pin(16))
+motor_pwm_b.freq(1000)
+motor_pwm_b.duty_u16(0)  # Inicialmente desligado
+
+# Configuração do pino STBY para o TB6612FNG
+stby = Pin(20, Pin.OUT)
+stby.value(1)  # Ativar o driver
+
+# Flag para indicar quando o robô deve parar
+flag_parada = 0
+
+# Configuração do UART para Bluetooth (HC-05)
+uart = UART(0, baudrate=9600, tx=Pin(0), rx=Pin(1))
+
+# Variáveis para leitura digital dos sensores de linha
+sensor_esq_estado = sensor_dir_estado = 0
 
 # Configuração da matriz de LEDs WS2812B
 np = neopixel.NeoPixel(machine.Pin(7), 25)
@@ -52,6 +82,7 @@ CYA = (0, 1*it, 1*it)# CYAN
 WHI = (1*it//3, 1*it//3, 1*it//3)# WHITE
 BLA = (0, 0, 0)# BLACK
 
+# Matrizes a serem mostradas no display 5x5
 nothing = [
     [BLA, BLA, BLA, BLA, BLA],
     [BLA, BLA, BLA, BLA, BLA],
@@ -100,6 +131,7 @@ right_arrow = [
     [BLA, BLA, BLA, BLA, BLA]
 ]
 
+# Função para programar a matriz de LED's de maneira mais intuitiva
 def mostrarMatriz(desenho):
     # definir a matriz 5x5
     led_matrix = desenho
@@ -119,72 +151,42 @@ def mostrarMatriz(desenho):
 
 mostrarMatriz(nothing)
 
-# Configuração OLED
-i2c = SoftI2C(scl=Pin(15), sda=Pin(14))
-oled = SSD1306_I2C(128, 64, i2c)
-
-# Configuração dos botões
-button_a = Pin(5, Pin.IN, Pin.PULL_UP)
-button_b = Pin(6, Pin.IN, Pin.PULL_UP)
-estado_botao_a = 0
-estado_botao_b = 0
-
-# Configuração dos motores (TB6612FNG)
-motor_in1_a = Pin(4, Pin.OUT)
-motor_in2_a = Pin(9, Pin.OUT)
-motor_pwm_a = PWM(Pin(8))
-motor_pwm_a.freq(1000)
-motor_pwm_a.duty_u16(0)  # Inicialmente desligado
-
-motor_in1_b = Pin(18, Pin.OUT)
-motor_in2_b = Pin(19, Pin.OUT)
-motor_pwm_b = PWM(Pin(16))
-motor_pwm_b.freq(1000)
-motor_pwm_b.duty_u16(0)  # Inicialmente desligado
-
-# Configuração do pino STBY para o TB6612FNG
-stby = Pin(20, Pin.OUT)
-stby.value(1)  # Ativar o driver
-
-
-flag_parada = 0
-
-# Configuração do UART para Bluetooth (HC-05)
-uart = UART(0, baudrate=9600, tx=Pin(0), rx=Pin(1))
-
-sensor_esq_estado = sensor_dir_estado = 0
-
-def lerSensor():
-    global sensores, rate #sensor_esq_estado, sensor_dir_estado
-    
-    sensores = [0, 0, 0, 0]
-    
-    # Ler os valores dos canais 0 a 3
-    for channel in range(4):
-        value = adc.read(rate=rate, channel1=channel)
-        sensores[channel] = value
-    
-    print(sensores)
-    
-    # Ler o estado do pino GPIO0
-    #sensor_esq_estado = sensor_esq.value()
-    #sensor_dir_estado = sensor_dir.value()
-    
-    #print("esquerdo: ", sensor_esq_estado, "       direito: ", sensor_dir_estado)
-    
-    # Aguardar 0.2 segundo antes da próxima leitura
-    #sleep(0.2)
-
+# Função para debug dos sensores
 def lerValoresCrus():
     for i, channel in enumerate([0, 1, 2, 3]):
         value = adc.read(rate=4, channel1=channel)
         print(f"Valor normalizado do canal {channel}: {value}")
     print('')
 
-def send_data(data):
-    uart.write(data + '\n')  # Enviar dados com nova linha
+# Função para mostrar a linha a ser seguida na matriz de LED's
+def mostrarLinhaMatriz(valores):
+    follow_matrix = [
+        [BLA, BLA, BLA, BLA, BLA],
+        [BLA, BLA, BLA, BLA, BLA],
+        [BLA, BLA, BLA, BLA, BLA],
+        [BLA, BLA, BLA, BLA, BLA],
+        [BLA, BLA, BLA, BLA, BLA]
+    ]
     
+    il = 200
+    vetor = [3, 2, -1, 1, 0]
+    for s in range(0, 5):
+        if(s != 2):
+            s2 = 0 if(valores[vetor[s]] > 1) else int(il*(1-valores[vetor[s]])//3)
+            for s1 in range(0, 5):
+                follow_matrix[s1][s] = (s2, s2, s2) # WHITE LINE
+    mostrarMatriz(follow_matrix)
 
+# Função para iniciar o display Oled
+def iniciaOled():
+    oled.fill(0)  # Limpar display
+    oled.text("BitDogSegue", 0, 0)
+    oled.text("Conecte o BT", 0, 10)
+    oled.text("Aperte (A)", 0, 30)
+    oled.text("para calibrar", 0, 40)
+    oled.show()
+
+# Função para mudar a velocidade do robô de -100 a 100
 def set_motor_speed(motor, speed):
     dutycycle = int(speed * 65535 / 100)
     if motor == "A":
@@ -204,60 +206,12 @@ def set_motor_speed(motor, speed):
             motor_in2_b.on()
         motor_pwm_b.duty_u16(dutycycle)
 
-def mostrarLinhaMatriz(valores):
 
-    follow_matrix = [
-        [BLA, BLA, BLA, BLA, BLA],
-        [BLA, BLA, BLA, BLA, BLA],
-        [BLA, BLA, BLA, BLA, BLA],
-        [BLA, BLA, BLA, BLA, BLA],
-        [BLA, BLA, BLA, BLA, BLA]
-    ]
-    
-    il = 200
-    vetor = [3, 2, -1, 1, 0]
-    for s in range(0, 5):
-        if(s != 2):
-            s2 = 0 if(valores[vetor[s]] > 1) else int(il*(1-valores[vetor[s]])//3)
-            for s1 in range(0, 5):
-                follow_matrix[s1][s] = (s2, s2, s2)# WHITE LINE
-    mostrarMatriz(follow_matrix)
-
-def iniciaOled():
-    oled.fill(0)  # Limpar display
-    oled.text("BitDogSegue", 0, 0)
-    oled.text("Conecte o BT", 0, 10)
-    oled.text("Aperte (A)", 0, 30)
-    oled.text("para calibrar", 0, 40)
-    oled.show()
-
-def controle_bang_bang():
-    global base_speed, linha, flag_parada, limiar, sensores, min_vals, max_vals #sensor_esq_estado, sensor_dir_estado
-
-    # Leitura dos sensores
-    #estado_dir = []
-    #estado_esq = []
-     # sistema para fazer a media de diversas leituras (deixa a resposta mais lenta)
-    #quantidade_de_leituras = 5
-    #for i in range(0, quantidade_de_leituras):
-    #    lerSensor()
-    #    estado_dir.append(sensor_dir_estado)
-    #    estado_esq.append(sensor_esq_estado)
-    #    sleep(0.01)
-    # 
-    #sensor_esq_estado = 1 if estado_dir.count(1) > estado_dir.count(0) else 0
-    #sensor_dir_estado = 1 if estado_esq.count(1) > estado_esq.count(0) else 0
-    
-    
-    #estado_dir.append(sensor_dir_estado)
-    #estado_esq.append(sensor_esq_estado)
-    
+# Função para digitalizar os valores lidos pelo sensores analogicamente
+def digitalizar():
+    global linha, limiar, min_vals, max_vals, sensor_esq_estado, sensor_dir_estado
     # Ler e normalizar os valores dos sensores
-    normalized_values = read_normalized_values(adc, min_vals, max_vals)
     
-    mostrarLinhaMatriz(normalized_values)
-    
-    print(normalized_values)
     
     sensor_esq_estado = 0 if(linha == 1) else 1
     sensor_dir_estado = 0 if(linha == 1) else 1
@@ -266,6 +220,17 @@ def controle_bang_bang():
         sensor_esq_estado = linha
     if((normalized_values[3] > limiar and linha == 1) or (normalized_values[3] < limiar and linha == 0)):
         sensor_dir_estado = linha
+    
+
+# Função para fazer o controle bang-bang usando somente os sensores da ponta digitalizados
+def controle_bang_bang():
+    global base_speed, linha, flag_parada, limiar, min_vals, max_vals, sensor_esq_estado, sensor_dir_estado #sensor_esq_estado, sensor_dir_estado
+    
+    normalized_values = read_normalized_values(adc, min_vals, max_vals)
+    mostrarLinhaMatriz(normalized_values)
+    print(normalized_values)
+    
+    digitalizar()
     
     if(flag_parada == 0):
         # Lógica Bang-Bang
@@ -282,13 +247,14 @@ def controle_bang_bang():
             set_motor_speed("A", base_speed)
             set_motor_speed("B", base_speed)
     else:
-        set_motor_speed("A", 0)
-        set_motor_speed("B", 0)
+        stop_robot()
 
+# Função para o controle remoto para andar para frente
 def andar_para_frente():
     set_motor_speed("A", base_speed)
     set_motor_speed("B", base_speed)
 
+# Função para o controle remoto para andar para trás
 def andar_para_tras():
     global base_speed
     dutycycle = int(base_speed * 65535 / 100)
@@ -302,6 +268,7 @@ def andar_para_tras():
     motor_pwm_a.duty_u16(dutycycle)
     motor_pwm_b.duty_u16(dutycycle)
     
+# Função para o controle remoto para andar para esquerda
 def andar_para_esquerda():
     global base_speed
     dutycycle = int(base_speed * 65535 / 100)
@@ -314,7 +281,8 @@ def andar_para_esquerda():
     
     motor_pwm_a.duty_u16(dutycycle)
     motor_pwm_b.duty_u16(dutycycle)
-    
+
+# Função para o controle remoto para andar para direita
 def andar_para_direita():
     global base_speed
     dutycycle = int(base_speed * 65535 / 100)
@@ -328,25 +296,14 @@ def andar_para_direita():
     motor_pwm_a.duty_u16(dutycycle)
     motor_pwm_b.duty_u16(dutycycle)
 
+# Função para parar o robô
 def stop_robot():
     set_motor_speed("A", 0)
     set_motor_speed("B", 0)
 
-
-def checarBotoes():
-    global estado_botao_a, estado_botao_b, flag_parada, adc, integral, last_error
-    
-    lerBotoes()
-    if(estado_botao_b):
-        if(flag_parada):
-            flag_parada = 0
-        else:
-            flag_parada = 1
-            integral = 0.0
-            last_error = 0.0
-            stop_robot()
-        sleep(0.2)
-
+# Função para enviar caracteres através da UART
+def send_data(data):
+    uart.write(data + '\n')  # Enviar dados com nova linha
 
 def controle_bluetooth():
     global base_speed, flag_parada, modo_de_operacao, integral, last_error, Kp, Kd, Ki
@@ -412,6 +369,19 @@ def controle_bluetooth():
                 mostrarMatriz(nothing)
                 stop_robot()
 
+def checarBotoes():
+    global estado_botao_a, estado_botao_b, flag_parada, adc, integral, last_error
+    
+    lerBotoes()
+    if(estado_botao_b):
+        if(flag_parada):
+            flag_parada = 0
+        else:
+            flag_parada = 1
+            integral = 0.0
+            last_error = 0.0
+            stop_robot()
+        sleep(0.2)
 
 def lerBotoes():
     global estado_botao_a, estado_botao_b, flag_parada
@@ -550,21 +520,16 @@ def esperarClickEmA():
         lerBotoes()
         sleep(0.01)
 
+def setup():
+    iniciaOled()
+    esperarClickEmA() # aperte o botão A para começar a calibração
 
-iniciaOled()
-esperarClickEmA()
+    min_vals, max_vals = calibrate_sensors(adc, 40) # etapa de calibração
 
-min_vals, max_vals = calibrate_sensors(adc, 40)
+    oled.fill(0)  # Limpar display
+    oled.show()
 
-oled.fill(0)  # Limpar display
-oled.text("BitDogSegue", 0, 0)
-oled.text("Conecte o BT", 0, 10)
-oled.show()
-
-oled.fill(0)  # Limpar display
-oled.show()
-
-while True:
+def loop():
     controle_bluetooth()
     if(modo_de_operacao == 1):
         controle_bang_bang()
@@ -573,5 +538,10 @@ while True:
     checarBotoes()
     
     sleep(0.01)  # Pequeno delay para evitar excesso de processamento
+    
+def main():
+    setup()
+    while(True):
+        loop()
 
-
+main()
