@@ -6,4 +6,4 @@ O BitDogSegue é um robô seguidor de linha usando a placa BitDogLab como base e
 Para mais detalhes sobre o projeto, acesse a documentação.
 
 [Documentação](https://docs.google.com/document/d/1uC-1uOnyaNJ6YEM8gG9vPqVe9gIrEa1YJPF4Q7OL9hc/edit?usp=sharing)
-[Apresentação](https://www.canva.com/design/DAGSwRiDdL4/ZwwJzPMrcjvORxdEQCQ9Lw/edit?utm_content=DAGSwRiDdL4&utm_campaign=designshare&utm_medium=link2&utm_source=sharebutton)
+[Apresentação](https://theresistance.my.canva.site/bitdogsegue)
